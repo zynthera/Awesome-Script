@@ -5,12 +5,13 @@
 [![Visitors](https://visitor-badge.laobi.icu/badge?page_id=zynthera/Awesome-Script)](https://github.com/zynthera/Awesome-Script)
 
 Welcome to **Awesome Script**! 😎✨  
-This repository houses the ultimate Hacker CLI tool with real-time notifications, command chaining, and forensic evasion. Whether you're running it under a root or non-root environment, our installation and configuration guide will help you set up the tool effortlessly on any Linux distribution.
+This repository houses the ultimate Hacker CLI tool with real-time notifications, command chaining, and forensic evasion. The script supports various environments including Termux. Follow the instructions below for setting up on Termux along with other Linux environments.
 
 ## Table of Contents
 - [Features](#features)
 - [Installation Guide](#installation-guide)
   - [Requirements](#requirements)
+  - [Installation for Termux Users](#installation-for-termux-users)
   - [Installation for Unrooted Users](#installation-for-unrooted-users)
   - [Installation for Root Users](#installation-for-root-users)
 - [Usage](#usage)
@@ -30,7 +31,7 @@ This repository houses the ultimate Hacker CLI tool with real-time notifications
   Execute complex commands effortlessly.
   
 - **Cross-Platform Support** 🌐  
-  Compatible with various Linux distros, whether you're operating as root or a regular user.
+  Compatible with Termux and various Linux distributions.
   
 - **Secure Config Management** 🔐  
   Encrypted configuration and password protection to keep your operations safe.
@@ -40,7 +41,7 @@ This repository houses the ultimate Hacker CLI tool with real-time notifications
 
 ## Installation Guide
 
-Below you will find step-by-step instructions to install **Awesome Script** on your Linux machine. We provide two sections: one for unrooted users and one for root users. Both will work on common distributions like Ubuntu, Debian, Fedora, Arch, and more.
+Below you will find step-by-step instructions to install **Awesome Script** on your system.
 
 ### Requirements
 Ensure you have the following dependencies installed:
@@ -67,87 +68,111 @@ sudo dnf install bash gpg jq whiptail fzf tor nmap tcpdump proxychains -y
 sudo pacman -S bash gpg jq whiptail fzf tor nmap tcpdump proxychains --noconfirm
 ```
 
-### Installation for Unrooted Users
-1. **Clone the Repository**  
+### Installation for Termux Users
+For Termux users, follow these additional steps to install packages specific to Termux:
+
+1. **Update Termux Packages:**
+   ```bash
+   pkg update && pkg upgrade
+   ```
+
+2. **Install Required Packages:**
+   ```bash
+   pkg install bash gpg jq whiptail fzf tor nmap tcpdump proxychains termux-api git
+   ```
+
+3. **Clone the Repository:**
    ```bash
    git clone https://github.com/zynthera/Awesome-Script.git
    cd Awesome-Script
    ```
-2. **Make the Script Executable**  
+
+4. **Make the Script Executable:**
    ```bash
    chmod +x official.sh
    ```
-3. **Run the Script**  
-   Simply execute the script:
+
+5. **Run the Script:**
    ```bash
    ./official.sh
    ```
-   - The script will run in user mode. Some advanced features, such as system-wide cron jobs or initializing systemd services, may be limited.
 
-### Installation for Root Users
-1. **Clone the Repository**  
+### Installation for Unrooted Users
+1. **Clone the Repository:**
    ```bash
    git clone https://github.com/zynthera/Awesome-Script.git
    cd Awesome-Script
    ```
-2. **Make the Script Executable**  
+2. **Make the Script Executable:**
+   ```bash
+   chmod +x official.sh
+   ```
+3. **Run the Script:**
+   ```bash
+   ./official.sh
+   ```
+   *Note: Advanced features like system-wide cron jobs or systemd services may be limited in unrooted mode.*
+
+### Installation for Root Users
+1. **Clone the Repository:**
+   ```bash
+   git clone https://github.com/zynthera/Awesome-Script.git
+   cd Awesome-Script
+   ```
+2. **Make the Script Executable:**
    ```bash
    sudo chmod +x official.sh
    ```
-3. **Run the Script with Root Privileges**  
-   Execute the script as root for full functionality:
+3. **Run the Script with Root Privileges:**
    ```bash
    sudo ./official.sh
    ```
-   - Running as root enables additional features such as system-level cron integration and managing services with systemd.
+   *Note: Running as root enables additional features such as system-level cron integration and systemd services.*
 
 ## Usage
 
-After installation, launch the script and you'll be greeted with a handy menu offering a range of options:
-- **Add Custom Command** 🔄: Add new commands to tailor the script to your needs.
+After installation, launch the script and you'll be greeted with a handy menu offering various options:
+- **Add Custom Command** 🔄: Add new commands tailored to your needs.
 - **Edit Commands** ✏️: Modify existing commands.
 - **Auto-Run & Scheduling** 🕒: Set up commands to run automatically at boot or on a schedule.
-- **System Health Check** 🚑: Perform diagnostics to ensure everything is running smoothly.
+- **System Health Check** 🚑: Perform diagnostics to ensure everything runs smoothly.
 
-Explore all available options by navigating through the menu!
+Navigate through the menu to explore all available options!
 
 ## FAQ
 
 **Q: What Linux distributions are supported?**  
-A: The script works on most modern Linux distributions including Ubuntu, Debian, Fedora, Arch, and more. Specific installation commands may vary depending on your package manager.
+A: The script works on most modern Linux distributions including Ubuntu, Debian, Fedora, Arch, and Termux on Android.
 
 **Q: Do I need root privileges to run Awesome Script?**  
-A: No, you can run it in unrooted mode. However, some features like systemd service integration or global cron setups may require root access.
+A: No, you can run it in unrooted mode. However, some advanced features require root access.
 
 **Q: How do I update dependencies?**  
-A: Ensure you keep your system updated using your package manager (e.g., `sudo apt update && sudo apt upgrade` for Ubuntu/Debian).
+A: Keep your system updated using your package manager (e.g., `sudo apt update && sudo apt upgrade` for Ubuntu/Debian or `pkg update && pkg upgrade` for Termux).
 
-**Q: The script requires multiple dependencies; how can I ensure they are all installed correctly?**  
-A: The installation guide includes commands for installing all required dependencies. In case of any missing package, please install it manually using your package manager.
-
-**Q: I encountered an error while running the script. Where can I ask for help?**  
-A: Visit our [GitHub Issues](https://github.com/zynthera/Awesome-Script/issues) page to open a new support request or to search for similar issues.
+**Q: Where can I ask for help if I encounter issues?**  
+A: Visit our [GitHub Issues](https://github.com/zynthera/Awesome-Script/issues) page to open a support request or search for similar issues.
 
 **Q: Can I contribute to Awesome Script?**  
-A: Absolutely! Please refer to the [Contributing](#contributing) section below for more details.
+A: Absolutely! Please refer to the [Contributing](#contributing) section below for details.
 
 ## Contributing 🤝
 
 Contributions are always welcome!  
-1. Fork the repository.  
-2. Create your feature branch:  
+1. **Fork the repository.**
+2. **Create your feature branch:**
    ```bash
    git checkout -b feature/your-feature-name
    ```
-3. Commit your changes with a descriptive message:  
+3. **Commit your changes with a descriptive message:**
    ```bash
    git commit -m "Description of your feature"
    ```
-4. Push to your branch:  
+4. **Push to your branch:**
    ```bash
    git push origin feature/your-feature-name
    ```
-5. Open a pull request on GitHub.
+5. **Open a pull request on GitHub.**
 
 Let's build something amazing together!
 
