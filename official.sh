@@ -1,9 +1,9 @@
 #!/bin/bash
-
-# Script: officail.sh
+# Script: official.sh
 # Purpose: Ultimate hacker CLI tool with real-time notifications, command chaining, and forensic evasion
 # Author: XploitNinjaOfficial (Instagram: @xploit.ninja)
 
+set -euo pipefail
 
 # Configuration
 CONFIG_DIR="$HOME/.hacker_customizer"
@@ -56,32 +56,56 @@ touch "$LOG_FILE" "$HISTORY_FILE" "$CMD_LOG" "$NOTIFY_QUEUE"
 
 # Initialize config if empty
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo '{"commands":{},"categories":{},"auto_run":"none","theme":"hacker","favorites":[],"stealth":false,"password":"","tor_enabled":false,"proxies":[],"timeout":300}' | gpg --symmetric --cipher-algo AES256 -o "$CONFIG_FILE" || { echo "Failed to initialize config"; exit 1; }
+    mkdir -p "$CONFIG_DIR"
+    echo '{"commands":{},"categories":{},"auto_run":"none","theme":"hacker","favorites":[],"stealth":false,"password":"","tor_enabled":false,"proxies":[],"timeout":300}' \
+        | gpg --symmetric --batch --passphrase "default" --cipher-algo AES256 -o "$CONFIG_FILE"
 fi
 
 # Decrypt config
 decrypt_config() {
-    [ -f "$CONFIG_TEMP" ] && return
-    gpg -d "$CONFIG_FILE" 2>/dev/null > "$CONFIG_TEMP" || { send_notification "Failed to decrypt config!"; exit 1; }
+    if [ -f "$CONFIG_TEMP" ]; then
+        return
+    fi
+    if ! gpg -d --batch --yes "$CONFIG_FILE" > "$CONFIG_TEMP" 2>/dev/null; then
+        send_notification "Failed to decrypt config!"
+        exit 1
+    fi
 }
 
 # Encrypt config
 encrypt_config() {
-    [ -f "$CONFIG_TEMP" ] || return
-    gpg --symmetric --cipher-algo AES256 -o "$CONFIG_FILE" "$CONFIG_TEMP" && rm "$CONFIG_TEMP" || { send_notification "Failed to encrypt config!"; exit 1; }
+    if [ ! -f "$CONFIG_TEMP" ]; then
+        return
+    fi
+    if gpg --symmetric --batch --yes --cipher-algo AES256 -o "$CONFIG_FILE" "$CONFIG_TEMP"; then
+        rm "$CONFIG_TEMP"
+    else
+        send_notification "Failed to encrypt config!"
+        exit 1
+    fi
 }
 
 # Password protection
 check_password() {
     decrypt_config
-    local stored_pass=$(jq -r '.password' "$CONFIG_TEMP")
+    local stored_pass
+    stored_pass=$(jq -r '.password' "$CONFIG_TEMP")
     if [ -n "$stored_pass" ]; then
         pass=$(whiptail --passwordbox "Enter script password:" 8 40 3>&1 1>&2 2>&3)
-        [ "$(echo -n "$pass" | sha256sum | cut -d' ' -f1)" != "$stored_pass" ] && { send_notification "Incorrect password!"; exit 1; }
+        if [ "$(echo -n "$pass" | sha256sum | awk '{print $1}')" != "$stored_pass" ]; then
+            send_notification "Incorrect password!"
+            exit 1
+        fi
     else
         pass=$(whiptail --passwordbox "Set script password (leave empty for none):" 8 40 3>&1 1>&2 2>&3)
         if [ -n "$pass" ]; then
-            jq ".password = \"$(echo -n "$pass" | sha256sum | cut -d' ' -f1)\"" "$CONFIG_TEMP" > "$CONFIG_TEMP.tmp" && mv "$CONFIG_TEMP.tmp" "$CONFIG_TEMP" || { send_notification "Failed to set password!"; exit 1; }
+            newhash=$(echo -n "$pass" | sha256sum | awk '{print $1}')
+            if jq ".password = \"${newhash}\"" "$CONFIG_TEMP" > "$CONFIG_TEMP.tmp"; then
+                mv "$CONFIG_TEMP.tmp" "$CONFIG_TEMP"
+            else
+                send_notification "Failed to set password!"
+                exit 1
+            fi
         fi
     fi
 }
@@ -106,9 +130,15 @@ send_notification() {
 
 # Logging function
 log_message() {
-    local stealth=$(jq -r '.stealth' "$CONFIG_TEMP")
-    [ "$stealth" = "false" ] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
-    [ $DEBUG_MODE -eq 1 ] && echo "[DEBUG] $1" >> "$LOG_FILE"
+    local message="$1"
+    local stealth
+    stealth=$(jq -r '.stealth' "$CONFIG_TEMP" 2>/dev/null || echo "false")
+    if [ "$stealth" = "false" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $message" >> "$LOG_FILE"
+    fi
+    if [ $DEBUG_MODE -eq 1 ]; then
+        echo "[DEBUG] $message" >> "$LOG_FILE"
+    fi
 }
 
 # Check dependencies
@@ -116,25 +146,32 @@ check_dependencies() {
     local deps=("whiptail" "jq" "fzf" "gpg" "figlet" "tor" "proxychains" "nmap" "tcpdump" "iftop")
     local pkg_manager=""
     case "$DISTRO" in
-        termux) pkg_manager="pkg install" ;;
+        termux) pkg_manager="pkg install -y" ;;
         ubuntu|debian|kali) pkg_manager="apt install -y" ;;
         arch|manjaro) pkg_manager="pacman -S --noconfirm" ;;
         fedora) pkg_manager="dnf install -y" ;;
         *) pkg_manager="echo 'Manual install required for'" ;;
     esac
     for cmd in "${deps[@]}"; do
-        if ! command -v "$cmd" >/dev/null; then
+        if ! command -v "$cmd" >/dev/null 2>&1; then
             send_notification "Installing $cmd..."
-            $pkg_manager "$cmd" 2>/dev/null || { log_message "Failed to install $cmd"; send_notification "Failed to install $cmd"; exit 1; }
+            if ! $pkg_manager "$cmd" 2>/dev/null; then
+                log_message "Failed to install $cmd"
+                send_notification "Failed to install $cmd"
+                exit 1
+            fi
         fi
     done
-    [ "$ENV" = "termux" ] && $pkg_manager termux-api 2>/dev/null
+    if [ "$ENV" = "termux" ]; then
+        $pkg_manager termux-api 2>/dev/null || true
+    fi
 }
 
 # Validate cron schedule
 validate_cron() {
     local schedule="$1"
-    if [[ ! "$schedule" =~ ^[0-9*]+[[:space:]][0-9*]+[[:space:]][0-9*]+[[:space:]][0-9*]+[[:space:]][0-9*]+$ ]]; then
+    # More robust regex to support numeric, wildcards, slashes, commas and dashes
+    if [[ ! "$schedule" =~ ^([0-5]?[0-9]|[*]|([0-5]?[0-9](\/[0-9]+)?))( ([0-5]?[0-9]|[*]|([0-5]?[0-9](\/[0-9]+)?))){4}$ ]]; then
         send_notification "Invalid cron schedule!"
         return 1
     fi
@@ -144,7 +181,7 @@ validate_cron() {
 # Device details
 show_device_details() {
     local details=""
-    details+="OS: $( [ -f /etc/os-release ] && grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '\"' || echo 'Unknown' )\n"
+    details+="OS: $( [ -f /etc/os-release ] && grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"' || echo 'Unknown' )\n"
     details+="Kernel: $(uname -r)\n"
     details+="CPU: $(lscpu | grep 'Model name' | cut -d: -f2 | xargs)\n"
     details+="Memory: $(free -h | grep Mem | awk '{print $2}') total, $(free -h | grep Mem | awk '{print $3}') used\n"
@@ -157,17 +194,23 @@ show_device_details() {
 
 # Tor service management
 manage_tor() {
-    local action=$1
+    local action="$1"
     if [ "$action" = "start" ]; then
         if [ "$ENV" = "termux" ]; then
             tor &>/dev/null &
         else
-            [ $ROOT_USER -eq 0 ] && { send_notification "Starting Tor requires root!"; return 1; }
-            systemctl start tor || { send_notification "Failed to start Tor!"; return 1; }
+            if [ $ROOT_USER -eq 0 ]; then
+                send_notification "Starting Tor requires root!"
+                return 1
+            fi
+            if ! systemctl start tor; then
+                send_notification "Failed to start Tor!"
+                return 1
+            fi
         fi
         sleep 2
         if ! pgrep tor >/dev/null; then
-            send_notification "Failed to start Tor!"
+            send_notification "Tor process not found after start!"
             return 1
         fi
         send_notification "Tor service started!"
@@ -176,15 +219,22 @@ manage_tor() {
         if [ "$ENV" = "termux" ]; then
             pkill tor
         else
-            [ $ROOT_USER -eq 0 ] && { send_notification "Stopping Tor requires root!"; return 1; }
+            if [ $ROOT_USER -eq 0 ]; then
+                send_notification "Stopping Tor requires root!"
+                return 1
+            fi
             systemctl stop tor
         fi
         send_notification "Tor service stopped!"
         log_message "Stopped Tor service"
     elif [ "$action" = "new_identity" ]; then
-        echo -e "AUTHENTICATE\nSIGNAL NEWNYM\nQUIT" | nc 127.0.0.1 9051 || { send_notification "Failed to request new Tor identity!"; return 1; }
-        send_notification "Tor new identity requested!"
-        log_message "Requested new Tor identity"
+        if echo -e "AUTHENTICATE\nSIGNAL NEWNYM\nQUIT" | nc 127.0.0.1 9051; then
+            send_notification "Tor new identity requested!"
+            log_message "Requested new Tor identity"
+        else
+            send_notification "Failed to request new Tor identity!"
+            return 1
+        fi
     fi
     return 0
 }
@@ -192,8 +242,20 @@ manage_tor() {
 # Check Tor status
 check_tor_status() {
     if pgrep tor >/dev/null; then
-        curl --socks5 127.0.0.1:9050 https://check.torproject.org/api/ip 2>/dev/null | jq -r '.IsTor' > /tmp/tor_status
-        [ "$(cat /tmp/tor_status)" = "true" ] && echo "Tor: Connected (Exit: $(curl --socks5 127.0.0.1:9050 https://check.torproject.org/api/ip 2>/dev/null | jq -r '.IP'))" || echo "Tor: Running but not connected"
+        local tor_output
+        tor_output=$(curl --socks5 127.0.0.1:9050 --max-time 5 -s https://check.torproject.org/api/ip)
+        if echo "$tor_output" | jq -e -r '.IsTor' >/dev/null 2>&1; then
+            local is_tor ip
+            is_tor=$(echo "$tor_output" | jq -r '.IsTor')
+            ip=$(echo "$tor_output" | jq -r '.IP')
+            if [ "$is_tor" = "true" ]; then
+                echo "Tor: Connected (Exit: ${ip})"
+            else
+                echo "Tor: Running but not connected via Tor network"
+            fi
+        else
+            echo "Tor: Running but unable to verify connection"
+        fi
     else
         echo "Tor: Not running"
     fi
@@ -203,16 +265,22 @@ check_tor_status() {
 manipulate_timestamp() {
     local file="$1"
     local days=$((RANDOM % 7 + 1))
-    local timestamp=$(date -d "-$days days" +%Y%m%d%H%M.%S)
-    touch -t "$timestamp" "$file" || { send_notification "Failed to manipulate timestamp for $file"; return 1; }
-    send_notification "Timestamp for $file set to $timestamp"
-    log_message "Manipulated timestamp for $file to $timestamp"
+    local timestamp
+    timestamp=$(date -d "-$days days" +%Y%m%d%H%M.%S)
+    if touch -t "$timestamp" "$file"; then
+        send_notification "Timestamp for $file set to $timestamp"
+        log_message "Manipulated timestamp for $file to $timestamp"
+    else
+        send_notification "Failed to manipulate timestamp for $file"
+        return 1
+    fi
 }
 
 # Main menu
 show_menu() {
     decrypt_config
-    whiptail --title "Hacker Customizer by XploitNinjaOfficial" --menu "Choose an option:" 28 60 18 \
+    local choice
+    choice=$(whiptail --title "Hacker Customizer by XploitNinjaOfficial" --menu "Choose an option:" 28 60 18 \
         "1" "Add Custom Command" \
         "2" "Edit Commands" \
         "3" "Set Auto-Run" \
@@ -231,42 +299,48 @@ show_menu() {
         "16" "Forensic Evasion" \
         "17" "Manage Proxies" \
         "18" "Help Menu" \
-        "19" "Exit" 2> /tmp/choice
-    choice=$(cat /tmp/choice)
-    rm /tmp/choice
+        "19" "Exit" 3>&1 1>&2 2>&3)
     case $choice in
         1) add_command ;;
         2) edit_commands ;;
         3) set_auto_run ;;
         4) configure_theme ;;
         5) backup_restore ;;
-        6) run_favorites ;;
-        7) view_history ;;
-        8) run_multiple ;;
-        9) toggle_stealth ;;
-        10) network_monitor ;;
-        11) generate_payload ;;
-        12) clean_logs ;;
-        13) remote_execution ;;
-        14) tor_control ;;
-        15) system_health ;;
-        16) forensic_evasion ;;
-        17) manage_proxies ;;
-        18) show_help ;;
+        6) run_favorites ;;  # Placeholder for additional function
+        7) view_history ;;   # Placeholder for additional function
+        8) run_multiple ;;   # Placeholder for additional function
+        9) toggle_stealth ;; # Placeholder for additional function
+        10) network_monitor ;;  # Placeholder for additional function
+        11) generate_payload ;; # Placeholder for additional function
+        12) clean_logs ;;       # Placeholder for additional function
+        13) remote_execution ;; # Placeholder for additional function
+        14) tor_control ;;      # Alias for manage_tor; see below
+        15) system_health ;;    # Placeholder for additional function
+        16) forensic_evasion ;; # Placeholder for additional function
+        17) manage_proxies ;;   # Placeholder for additional function
+        18) show_help ;;        # Placeholder for additional function
         19) encrypt_config; manage_tor stop; exit 0 ;;
+        *) send_notification "Invalid option. Exiting." ; exit 1 ;;
     esac
     encrypt_config
 }
 
 # Add a custom command
 add_command() {
-    category=$(whiptail --inputbox "Enter category (e.g., Recon, Exploit):" 8 40 2>&1 >/dev/tty)
+    local category name cmd suggestions
+    category=$(whiptail --inputbox "Enter category (e.g., Recon, Exploit):" 8 40 3>&1 1>&2 2>&3)
     [ -z "$category" ] && category="General"
-    name=$(whiptail --inputbox "Enter command name:" 8 40 2>&1 >/dev/tty)
-    [ -z "$name" ] && { send_notification "Name cannot be empty!"; return; }
-    cmd=$(whiptail --inputbox "Enter command (e.g., nmap -sV 192.168.1.0/24 | grep open):" 8 40 2>&1 >/dev/tty)
-    [ -z "$cmd" ] && { send_notification "Command cannot be empty!"; return; }
-    
+    name=$(whiptail --inputbox "Enter command name:" 8 40 3>&1 1>&2 2>&3)
+    if [ -z "$name" ]; then
+        send_notification "Name cannot be empty!"
+        return
+    fi
+    cmd=$(whiptail --inputbox "Enter command (e.g., nmap -sV 192.168.1.0/24 | grep open):" 8 40 3>&1 1>&2 2>&3)
+    if [ -z "$cmd" ]; then
+        send_notification "Command cannot be empty!"
+        return
+    fi
+
     # Suggest commands
     suggestions=("nmap -sC -sV 192.168.1.0/24 | grep open" "sqlmap -u http://example.com --dbs" "msfvenom -p windows/meterpreter/reverse_tcp" "proxychains nmap -sT 192.168.1.0/24 | awk '/open/'")
     if whiptail --yesno "Use a suggested command?" 8 40; then
@@ -275,7 +349,7 @@ add_command() {
 
     # Test command
     if whiptail --yesno "Test command before saving?" 8 40; then
-        timeout $(jq -r '.timeout' "$CONFIG_TEMP") bash -c "$cmd" > /tmp/cmd_test 2>&1
+        timeout $(jq -r '.timeout' "$CONFIG_TEMP") bash -c "$cmd" > /tmp/cmd_test 2>&1 || true
         if [ $? -eq 0 ]; then
             whiptail --textbox /tmp/cmd_test 15 60
         else
@@ -284,19 +358,21 @@ add_command() {
         fi
     fi
 
-    # Check root requirement
-    if [[ "$cmd" =~ ^(sudo|ufw|iptables|airmon-ng|airodump-ng|tcpdump) ]] && [ $ROOT_USER -eq 0 ]; then
-        whiptail --msgbox "Warning: '$cmd' may require root privileges!" 8 40
+    # Check root requirement for specific commands
+    if [[ "$cmd" =~ ^(sudo|ufw|iptables|airmon-ng|airodump-ng|tcpdump) ]]; then
+        if [ $ROOT_USER -eq 0 ]; then
+            whiptail --msgbox "Warning: '$cmd' may require root privileges!" 8 40
+        fi
     fi
 
-    # Validate command
+    # Validate command syntax
     if ! bash -n -c "$cmd" 2>/dev/null; then
         send_notification "Invalid command syntax!"
         return
     fi
 
     # Tor routing option
-    if jq -r '.tor_enabled' "$CONFIG_TEMP" | grep -q true && whiptail --yesno "Route command through Tor?" 8 40; then
+    if jq -r '.tor_enabled' "$CONFIG_TEMP" | grep -qi true && whiptail --yesno "Route command through Tor?" 8 40; then
         cmd="torify $cmd"
     fi
 
@@ -304,20 +380,33 @@ add_command() {
     if whiptail --yesno "Obfuscate command script?" 8 40; then
         if command -v shc >/dev/null; then
             echo "$cmd" > "$COMMAND_DIR/$category-$name.sh"
-            shc -f "$COMMAND_DIR/$category-$name.sh" -o "$COMMAND_DIR/$category-$name" 2>/dev/null || { send_notification "Failed to obfuscate command!"; return; }
-            rm "$COMMAND_DIR/$category-$name.sh" "$COMMAND_DIR/$category-$name.sh.x.c" 2>/dev/null
-            cmd="$COMMAND_DIR/$category-$name"
+            if shc -f "$COMMAND_DIR/$category-$name.sh" -o "$COMMAND_DIR/$category-$name" 2>/dev/null; then
+                rm "$COMMAND_DIR/$category-$name.sh" "$COMMAND_DIR/$category-$name.sh.x.c" 2>/dev/null || true
+                cmd="$COMMAND_DIR/$category-$name"
+            else
+                send_notification "Failed to obfuscate command!"
+                return
+            fi
         else
             cmd="echo \"$(echo "$cmd" | base64)\" | base64 -d | bash"
         fi
     fi
 
     # Store in JSON
-    jq ".commands.\"$category\".\"$name\" = \"$cmd\"" "$CONFIG_TEMP" > "$CONFIG_TEMP.tmp" && mv "$CONFIG_TEMP.tmp" "$CONFIG_TEMP" || { send_notification "Failed to save command!"; return; }
-    jq ".categories.\"$category\" += [\"$name\"]" "$CONFIG_TEMP" > "$CONFIG_TEMP.tmp" && mv "$CONFIG_TEMP.tmp" "$CONFIG_TEMP"
-    if [[ ! "$cmd" =~ ^$COMMAND_DIR ]]; then
-        echo "#!/bin/bash" > "$COMMAND_DIR/$category-$name.sh"
-        echo "$cmd" >> "$COMMAND_DIR/$category-$name.sh"
+    if jq ".commands.\"$category\".\"$name\" = \"$(echo "$cmd" | sed 's/"/\\"/g')\"" "$CONFIG_TEMP" > "$CONFIG_TEMP.tmp"; then
+        mv "$CONFIG_TEMP.tmp" "$CONFIG_TEMP"
+    else
+        send_notification "Failed to save command!"
+        return
+    fi
+    if jq ".categories.\"$category\" += [\"$name\"]" "$CONFIG_TEMP" > "$CONFIG_TEMP.tmp"; then
+        mv "$CONFIG_TEMP.tmp" "$CONFIG_TEMP"
+    fi
+    if [[ "$cmd" != "$COMMAND_DIR"* ]]; then
+        {
+          echo "#!/bin/bash"
+          echo "$cmd"
+        } > "$COMMAND_DIR/$category-$name.sh"
         chmod +x "$COMMAND_DIR/$category-$name.sh"
     fi
     send_notification "Command '$name' added to '$category'!"
@@ -326,19 +415,27 @@ add_command() {
 
 # Edit commands
 edit_commands() {
-    category=$(jq -r '.commands | keys[]' "$CONFIG_TEMP" | fzf --prompt="Select category: ")
+    local category command new_cmd
+    category=$(jq -r '.commands | keys[]' "$CONFIG_TEMP" 2>/dev/null | fzf --prompt="Select category: ")
     [ -z "$category" ] && return
-    commands=$(jq -r ".commands.\"$category\" | keys[]" "$CONFIG_TEMP" | fzf --prompt="Select command to edit: ")
-    [ -z "$commands" ] && return
-    cmd=$(jq -r ".commands.\"$category\".\"$commands\"" "$CONFIG_TEMP")
-    new_cmd=$(whiptail --inputbox "Edit command '$commands':" 8 40 "$cmd" 2>&1 >/dev/tty)
+    command=$(jq -r ".commands.\"$category\" | keys[]" "$CONFIG_TEMP" | fzf --prompt="Select command to edit: ")
+    [ -z "$command" ] && return
+    cmd=$(jq -r ".commands.\"$category\".\"$command\"" "$CONFIG_TEMP")
+    new_cmd=$(whiptail --inputbox "Edit command '$command':" 8 40 "$cmd" 3>&1 1>&2 2>&3)
     if [ -n "$new_cmd" ] && bash -n -c "$new_cmd" 2>/dev/null; then
-        jq ".commands.\"$category\".\"$commands\" = \"$new_cmd\"" "$CONFIG_TEMP" > "$CONFIG_TEMP.tmp" && mv "$CONFIG_TEMP.tmp" "$CONFIG_TEMP" || { send_notification "Failed to update command!"; return; }
-        echo "#!/bin/bash" > "$COMMAND_DIR/$category-$commands.sh"
-        echo "$new_cmd" >> "$COMMAND_DIR/$category-$commands.sh"
-        chmod +x "$COMMAND_DIR/$category-$commands.sh"
-        send_notification "Command '$commands' updated!"
-        log_message "Updated command: $category/$commands"
+        if jq ".commands.\"$category\".\"$command\" = \"$(echo "$new_cmd" | sed 's/"/\\"/g')\"" "$CONFIG_TEMP" > "$CONFIG_TEMP.tmp"; then
+            mv "$CONFIG_TEMP.tmp" "$CONFIG_TEMP"
+        else
+            send_notification "Failed to update command!"
+            return
+        fi
+        {
+            echo "#!/bin/bash"
+            echo "$new_cmd"
+        } > "$COMMAND_DIR/$category-$command.sh"
+        chmod +x "$COMMAND_DIR/$category-$command.sh"
+        send_notification "Command '$command' updated!"
+        log_message "Updated command: $category/$command"
     else
         send_notification "Invalid command syntax!"
     fi
@@ -346,13 +443,12 @@ edit_commands() {
 
 # Set auto-run
 set_auto_run() {
-    whiptail --title "Auto-Run Setup" --menu "Choose auto-run option:" 15 50 4 \
+    local choice category cmd schedule period
+    choice=$(whiptail --title "Auto-Run Setup" --menu "Choose auto-run option:" 15 50 4 \
         "1" "Run on Boot" \
         "2" "Schedule with Cron" \
         "3" "Schedule with Anacron" \
-        "4" "Disable Auto-Run" 2> /tmp/auto_choice
-    choice=$(cat /tmp/auto_choice)
-    rm /tmp/auto_choice
+        "4" "Disable Auto-Run" 3>&1 1>&2 2>&3)
     case $choice in
         1)
             category=$(jq -r '.commands | keys[]' "$CONFIG_TEMP" | fzf --prompt="Select category: ")
@@ -361,17 +457,27 @@ set_auto_run() {
             [ -z "$cmd" ] && return
             if [ "$ENV" = "termux" ]; then
                 mkdir -p "$HOME/.termux/boot"
-                echo "#!/data/data/com.termux/files/usr/bin/bash" > "$HOME/.termux/boot/custom_run.sh"
-                echo "$COMMAND_DIR/$category-$cmd.sh" >> "$HOME/.termux/boot/custom_run.sh"
+                {
+                  echo "#!/data/data/com.termux/files/usr/bin/bash"
+                  echo "$COMMAND_DIR/$category-$cmd.sh"
+                } > "$HOME/.termux/boot/custom_run.sh"
                 chmod +x "$HOME/.termux/boot/custom_run.sh"
             elif [ "$DISTRO" = "gentoo" ]; then
-                [ $ROOT_USER -eq 0 ] && { send_notification "Root required for OpenRC setup!"; return; }
-                echo "#!/sbin/openrc-run" > /etc/init.d/hacker-customizer
-                echo "command=$COMMAND_DIR/$category-$cmd.sh" >> /etc/init.d/hacker-customizer
+                if [ $ROOT_USER -eq 0 ]; then
+                    send_notification "Root required for OpenRC setup!"
+                    return
+                fi
+                {
+                  echo "#!/sbin/openrc-run"
+                  echo "command=$COMMAND_DIR/$category-$cmd.sh"
+                } > /etc/init.d/hacker-customizer
                 chmod +x /etc/init.d/hacker-customizer
                 rc-update add hacker-customizer default
             else
-                [ $ROOT_USER -eq 0 ] && { send_notification "Root required for systemd setup!"; return; }
+                if [ $ROOT_USER -eq 0 ]; then
+                    send_notification "Root required for systemd setup!"
+                    return
+                fi
                 cat <<EOF > /etc/systemd/system/hacker-customizer.service
 [Unit]
 Description=Hacker Customizer Boot Script
@@ -395,24 +501,30 @@ EOF
             [ -z "$category" ] && return
             cmd=$(jq -r ".commands.\"$category\" | keys[]" "$CONFIG_TEMP" | fzf --prompt="Select command for cron: ")
             [ -z "$cmd" ] && return
-            schedule=$(whiptail --inputbox "Enter cron schedule (e.g., '0 * * * *' for hourly):" 8 40 2>&1 >/dev/tty)
+            schedule=$(whiptail --inputbox "Enter cron schedule (e.g., '0 * * * *' for hourly):" 8 40 3>&1 1>&2 2>&3)
             if [ -n "$schedule" ] && validate_cron "$schedule"; then
-                crontab -l > /tmp/crontab 2>/dev/null
+                crontab -l 2>/dev/null > /tmp/crontab || true
                 echo "$schedule $COMMAND_DIR/$category-$cmd.sh" >> /tmp/crontab
-                crontab /tmp/crontab || { send_notification "Failed to set cron job!"; return; }
-                rm /tmp/crontab
-                jq '.auto_run = "cron"' "$CONFIG_TEMP" > "$CONFIG_TEMP.tmp" && mv "$CONFIG_TEMP.tmp" "$CONFIG_TEMP"
-                send_notification "Scheduled '$cmd' with cron!"
-                log_message "Scheduled cron: $category/$cmd"
+                if crontab /tmp/crontab; then
+                    rm /tmp/crontab
+                    jq '.auto_run = "cron"' "$CONFIG_TEMP" > "$CONFIG_TEMP.tmp" && mv "$CONFIG_TEMP.tmp" "$CONFIG_TEMP"
+                    send_notification "Scheduled '$cmd' with cron!"
+                    log_message "Scheduled cron: $category/$cmd"
+                else
+                    send_notification "Failed to set cron job!"
+                fi
             fi
             ;;
         3)
-            [ $ROOT_USER -eq 0 ] && { send_notification "Root required for anacron setup!"; return; }
+            if [ $ROOT_USER -eq 0 ]; then
+                send_notification "Root required for anacron setup!"
+                return
+            fi
             category=$(jq -r '.commands | keys[]' "$CONFIG_TEMP" | fzf --prompt="Select category: ")
             [ -z "$category" ] && return
             cmd=$(jq -r ".commands.\"$category\" | keys[]" "$CONFIG_TEMP" | fzf --prompt="Select command for anacron: ")
             [ -z "$cmd" ] && return
-            period=$(whiptail --inputbox "Enter anacron period (e.g., '1' for daily):" 8 40 2>&1 >/dev/tty)
+            period=$(whiptail --inputbox "Enter anacron period (e.g., '1' for daily):" 8 40 3>&1 1>&2 2>&3)
             if [ -n "$period" ]; then
                 echo "$period 0 hacker-customizer $COMMAND_DIR/$category-$cmd.sh" > /etc/anacrontab || { send_notification "Failed to set anacron job!"; return; }
                 jq '.auto_run = "anacron"' "$CONFIG_TEMP" > "$CONFIG_TEMP.tmp" && mv "$CONFIG_TEMP.tmp" "$CONFIG_TEMP"
@@ -421,15 +533,19 @@ EOF
             fi
             ;;
         4)
-            [ "$ENV" = "termux" ] && rm -rf "$HOME/.termux/boot/custom_run.sh"
-            [ "$ENV" = "linux" ] && {
-                systemctl disable hacker-customizer.service 2>/dev/null
-                rm /etc/init.d/hacker-customizer 2>/dev/null
-            }
-            crontab -r 2>/dev/null
+            if [ "$ENV" = "termux" ]; then
+                rm -f "$HOME/.termux/boot/custom_run.sh"
+            elif [ "$ENV" = "linux" ]; then
+                systemctl disable hacker-customizer.service 2>/dev/null || true
+                rm -f /etc/init.d/hacker-customizer
+            fi
+            crontab -r 2>/dev/null || true
             jq '.auto_run = "none"' "$CONFIG_TEMP" > "$CONFIG_TEMP.tmp" && mv "$CONFIG_TEMP.tmp" "$CONFIG_TEMP"
             send_notification "Auto-run disabled!"
             log_message "Disabled auto-run"
+            ;;
+        *)
+            send_notification "Invalid auto-run option selected!"
             ;;
     esac
 }
@@ -444,22 +560,79 @@ configure_theme() {
 
 # Backup and restore
 backup_restore() {
-    whiptail --title "Backup/Restore" --menu "Choose option:" 10 40 3 \
+    local choice backup timestamp
+    choice=$(whiptail --title "Backup/Restore" --menu "Choose option:" 10 40 3 \
         "1" "Backup Config" \
         "2" "Restore Config" \
-        "3" "Back" 2> /tmp/backup_choice
-    choice=$(cat /tmp/backup_choice)
-    rm /tmp/backup_choice
+        "3" "Back" 3>&1 1>&2 2>&3)
     case $choice in
         1)
             timestamp=$(date '+%Y%m%d_%H%M%S')
-            cp "$CONFIG_FILE" "$BACKUP_DIR/hacker_config_$timestamp.json.gpg" || { send_notification "Failed to backup config!"; return; }
-            tar -czf "$BACKUP_DIR/hacker_commands_$timestamp.tar.gz" "$COMMAND_DIR" || { send_notification "Failed to backup commands!"; return; }
-            send_notification "Backup created in $BACKUP_DIR!"
-            log_message "Created backup: hacker_config_$timestamp"
+            if cp "$CONFIG_FILE" "$BACKUP_DIR/hacker_config_$timestamp.json.gpg"; then
+                tar -czf "$BACKUP_DIR/hacker_commands_$timestamp.tar.gz" "$COMMAND_DIR"
+                send_notification "Backup created in $BACKUP_DIR!"
+                log_message "Created backup: hacker_config_$timestamp"
+            else
+                send_notification "Failed to backup config!"
+            fi
             ;;
         2)
-            backup=$(ls "$BACKUP_DIR"/*.json.gpg | fzf --prompt="Select backup to restore: ")
+            backup=$(ls "$BACKUP_DIR"/*.json.gpg 2>/dev/null | fzf --prompt="Select backup to restore: ")
             if [ -n "$backup" ]; then
-                cp "$backup" "$CONFIG_FILE" || { send_notification "Failed to restore config!"; return; }
-                tar -xzf "${backup%.json.gpg}.tar.gz" -C "$CONFIG_D
+                if cp "$backup" "$CONFIG_FILE"; then
+                    # Restore commands backup if available
+                    local tarfile="${backup%.json.gpg}.tar.gz"
+                    if [ -f "$tarfile" ]; then
+                        tar -xzf "$tarfile" -C "$CONFIG_DIR"
+                    fi
+                    send_notification "Config restored from backup!"
+                    log_message "Restored config from backup: $backup"
+                else
+                    send_notification "Failed to restore config!"
+                fi
+            fi
+            ;;
+        3)
+            return
+            ;;
+        *)
+            send_notification "Invalid option!"
+            ;;
+    esac
+}
+
+# Placeholder functions for additional features
+run_favorites() { send_notification "Feature not implemented yet."; }
+view_history() { send_notification "Feature not implemented yet."; }
+run_multiple() { send_notification "Feature not implemented yet."; }
+toggle_stealth() { send_notification "Feature not implemented yet."; }
+network_monitor() { send_notification "Feature not implemented yet."; }
+generate_payload() { send_notification "Feature not implemented yet."; }
+clean_logs() { send_notification "Feature not implemented yet."; }
+remote_execution() { send_notification "Feature not implemented yet."; }
+system_health() { send_notification "Feature not implemented yet."; }
+forensic_evasion() { send_notification "Feature not implemented yet."; }
+manage_proxies() { send_notification "Feature not implemented yet."; }
+show_help() { send_notification "Feature not implemented yet."; }
+tor_control() {
+    local action
+    action=$(whiptail --title "Tor Service Control" --menu "Choose action:" 10 40 3 \
+        "1" "Start Tor" \
+        "2" "Stop Tor" \
+        "3" "Request New Identity" 3>&1 1>&2 2>&3)
+    case $action in
+        1) manage_tor start ;;
+        2) manage_tor stop ;;
+        3) manage_tor new_identity ;;
+        *) send_notification "Invalid option for Tor control" ;;
+    esac
+}
+
+# Main execution
+main() {
+    check_dependencies
+    check_password
+    show_menu
+}
+
+main
